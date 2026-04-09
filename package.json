@@ -1,0 +1,45 @@
+{
+  "name": "bun-serialport",
+  "version": "0.1.0",
+  "description": "Bun-native serial port library using bun:ffi. No native compilation, no node-gyp.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./parsers": "./src/parsers/index.js"
+  },
+  "scripts": {
+    "test": "bun test tests/"
+  },
+  "author": {
+    "name": "Fredrik Paulin",
+    "email": "fredrik@rymdskepp.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fredrikpaulin/bun-serialport"
+  },
+  "keywords": [
+    "serial",
+    "serialport",
+    "bun",
+    "ffi",
+    "uart",
+    "rs232",
+    "robotics",
+    "sensors",
+    "hardware",
+    "iot",
+    "termios"
+  ],
+  "os": ["darwin", "linux"],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ]
+}
