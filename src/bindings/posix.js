@@ -1,16 +1,14 @@
 // POSIX serial port bindings via bun:ffi.
 // Calls libc directly — no native addon, no compilation step.
 
-import { dlopen, FFIType, ptr, toBuffer, toArrayBuffer, CString } from 'bun:ffi'
+import { dlopen, FFIType, ptr, toArrayBuffer, CString } from 'bun:ffi'
 import {
-  O_RDWR, O_NOCTTY, O_NONBLOCK, F_GETFL, F_SETFL,
-  TCSANOW, TCSAFLUSH, TCIFLUSH, TCOFLUSH, TCIOFLUSH,
+  O_RDWR, O_NOCTTY, O_NONBLOCK,
+  TCSADRAIN, TCSAFLUSH, TCIOFLUSH,
   CSIZE, CREAD, CLOCAL, CSTOPB, PARENB, PARODD, CRTSCTS,
-  IGNBRK, BRKINT, IGNPAR, PARMRK, INPCK, ISTRIP, INLCR, IGNCR, ICRNL,
-  IXON, IXOFF, IXANY, OPOST,
-  ISIG, ICANON, ECHO, ECHOE, ECHOK, ECHONL, NOFLSH, TOSTOP, IEXTEN,
+  INPCK, IXON, IXOFF,
   VMIN, VTIME, NCCS,
-  TIOCMGET, TIOCMSET, TIOCMBIS, TIOCMBIC,
+  TIOCMGET, TIOCMBIS, TIOCMBIC,
   TIOCM_DTR, TIOCM_RTS, TIOCM_CTS, TIOCM_DSR, TIOCM_CD, TIOCM_RI,
   TERMIOS_SIZE, TCFLAG_SIZE, TERMIOS_OFFSETS,
   encodeBaudRate, dataBitsFlag
@@ -108,10 +106,11 @@ export function openPort(path, options) {
   const fd = libc.symbols.open(ptr(pathBuf), O_RDWR | O_NOCTTY | O_NONBLOCK)
   if (fd < 0) throw errnoError('open')
 
-  // Get current termios
+  // Get current termios — keep one Uint8Array alive so ptr() stays valid
   const termiosBuf = new ArrayBuffer(TERMIOS_SIZE)
+  const termiosBytes = new Uint8Array(termiosBuf)
   const termiosView = new DataView(termiosBuf)
-  const termiosPtr = ptr(new Uint8Array(termiosBuf))
+  const termiosPtr = ptr(termiosBytes)
 
   if (libc.symbols.tcgetattr(fd, termiosPtr) < 0) {
     libc.symbols.close(fd)
@@ -161,7 +160,6 @@ export function openPort(path, options) {
 
   // Special characters: VMIN=1, VTIME=0 (blocking read until at least 1 byte)
   const ccOffset = off.c_cc
-  const termiosBytes = new Uint8Array(termiosBuf)
   // Clear all cc
   for (let i = 0; i < NCCS; i++) termiosBytes[ccOffset + i] = 0
   termiosBytes[ccOffset + VMIN] = 1
@@ -176,18 +174,17 @@ export function openPort(path, options) {
     writeSpeed(termiosView, off.c_ospeed, baudCode)
   }
   // Use cfsetispeed/cfsetospeed which handles platform differences
-  const termiosPtrFresh = ptr(new Uint8Array(termiosBuf))
-  if (libc.symbols.cfsetispeed(termiosPtrFresh, baudCode) < 0) {
+  if (libc.symbols.cfsetispeed(termiosPtr, baudCode) < 0) {
     libc.symbols.close(fd)
     throw errnoError('cfsetispeed')
   }
-  if (libc.symbols.cfsetospeed(termiosPtrFresh, baudCode) < 0) {
+  if (libc.symbols.cfsetospeed(termiosPtr, baudCode) < 0) {
     libc.symbols.close(fd)
     throw errnoError('cfsetospeed')
   }
 
   // Apply
-  if (libc.symbols.tcsetattr(fd, TCSAFLUSH, termiosPtrFresh) < 0) {
+  if (libc.symbols.tcsetattr(fd, TCSAFLUSH, termiosPtr) < 0) {
     libc.symbols.close(fd)
     throw errnoError('tcsetattr')
   }
@@ -202,21 +199,28 @@ export function closePort(fd) {
   if (libc.symbols.close(fd) < 0) throw errnoError('close')
 }
 
+const MAX_EAGAIN_RETRIES = 1000
+
 export function writePort(fd, data) {
   // data should be Uint8Array or Buffer
   const buf = data instanceof Uint8Array ? data : Buffer.from(data, 'utf-8')
   let offset = 0
+  let eagainCount = 0
   while (offset < buf.length) {
     const slice = buf.subarray(offset)
     const written = Number(libc.symbols.write(fd, ptr(slice), BigInt(slice.length)))
     if (written < 0) {
       const code = getErrno()
       if (code === 11 || code === 35) {
-        // EAGAIN / EWOULDBLOCK — try again
+        // EAGAIN / EWOULDBLOCK — kernel buffer full
+        if (++eagainCount > MAX_EAGAIN_RETRIES) {
+          throw new Error('write: device not accepting data (EAGAIN limit exceeded)')
+        }
         continue
       }
       throw errnoError('write')
     }
+    eagainCount = 0
     offset += written
   }
   return offset

@@ -10,7 +10,7 @@ import {
 } from './bindings/posix.js'
 
 const DEFAULT_READ_BUFFER_SIZE = 65536
-const READ_INTERVAL_MS = 1
+const DEFAULT_READ_INTERVAL_MS = 1
 
 export class SerialPort extends EventEmitter {
   #fd = -1
@@ -20,6 +20,7 @@ export class SerialPort extends EventEmitter {
   #isOpen = false
   #isClosing = false
   #readBuf
+  #readInterval
   #readTimer = null
 
   constructor(options) {
@@ -31,6 +32,7 @@ export class SerialPort extends EventEmitter {
     this.#baudRate = options.baudRate
     this.#options = { ...options }
     this.#readBuf = new Uint8Array(options.readBufferSize || DEFAULT_READ_BUFFER_SIZE)
+    this.#readInterval = options.readInterval || DEFAULT_READ_INTERVAL_MS
 
     if (options.autoOpen !== false) {
       // Defer to next tick so caller can attach event listeners
@@ -120,8 +122,18 @@ export class SerialPort extends EventEmitter {
 
   // Wire a parser to receive data events
   pipe(parser) {
-    this.on('data', (chunk) => parser.push(chunk))
+    const handler = (chunk) => parser.push(chunk)
+    this.on('data', handler)
+    parser._unpipe = () => this.off('data', handler)
     return parser
+  }
+
+  // Detach a previously piped parser
+  unpipe(parser) {
+    if (parser && typeof parser._unpipe === 'function') {
+      parser._unpipe()
+      parser._unpipe = undefined
+    }
   }
 
   // --- Private ---
@@ -138,7 +150,7 @@ export class SerialPort extends EventEmitter {
         const n = readPort(this.#fd, this.#readBuf)
         if (n > 0) {
           // Emit a copy so the read buffer can be reused
-          const data = new Uint8Array(this.#readBuf.buffer, 0, n).slice()
+          const data = this.#readBuf.slice(0, n)
           this.emit('data', data)
         }
       } catch (err) {
@@ -146,7 +158,7 @@ export class SerialPort extends EventEmitter {
         this.emit('error', err)
         this.close().catch(() => {})
       }
-    }, READ_INTERVAL_MS)
+    }, this.#readInterval)
   }
 
   #stopReading() {

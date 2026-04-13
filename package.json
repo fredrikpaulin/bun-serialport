@@ -1,6 +1,6 @@
 {
   "name": "bun-serialport",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bun-native serial port library using bun:ffi. No native compilation, no node-gyp.",
   "type": "module",
   "main": "src/index.js",

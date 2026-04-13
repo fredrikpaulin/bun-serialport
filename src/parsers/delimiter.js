@@ -14,31 +14,41 @@ export function delimiterParser(options = {}) {
       : new Uint8Array(delimiter)
 
   const emitter = new EventEmitter()
-  let buffer = new Uint8Array(0)
+  let buf = new Uint8Array(256)
+  let len = 0
+
+  function ensureCapacity(needed) {
+    if (needed <= buf.length) return
+    let cap = buf.length
+    while (cap < needed) cap *= 2
+    const next = new Uint8Array(cap)
+    next.set(buf.subarray(0, len))
+    buf = next
+  }
 
   function push(chunk) {
-    // Append chunk to buffer
-    const next = new Uint8Array(buffer.length + chunk.length)
-    next.set(buffer)
-    next.set(chunk, buffer.length)
-    buffer = next
+    ensureCapacity(len + chunk.length)
+    buf.set(chunk, len)
+    len += chunk.length
 
     // Scan for delimiter
     let start = 0
-    while (start <= buffer.length - delim.length) {
-      const idx = findDelimiter(buffer, delim, start)
+    while (start <= len - delim.length) {
+      const idx = findDelimiter(buf, delim, start, len)
       if (idx === -1) break
 
       const end = includeDelimiter ? idx + delim.length : idx
       if (end > start) {
-        emitter.emit('data', buffer.slice(start, end))
+        emitter.emit('data', buf.slice(start, end))
       }
       start = idx + delim.length
     }
 
-    // Keep remainder
+    // Compact remainder
     if (start > 0) {
-      buffer = buffer.slice(start)
+      const remaining = len - start
+      if (remaining > 0) buf.copyWithin(0, start, len)
+      len = remaining
     }
   }
 
@@ -46,11 +56,16 @@ export function delimiterParser(options = {}) {
   return emitter
 }
 
-function findDelimiter(haystack, needle, start) {
+function findDelimiter(haystack, needle, start, haystackLen) {
   if (needle.length === 1) {
-    return haystack.indexOf(needle[0], start)
+    const byte = needle[0]
+    for (let i = start; i < haystackLen; i++) {
+      if (haystack[i] === byte) return i
+    }
+    return -1
   }
-  outer: for (let i = start; i <= haystack.length - needle.length; i++) {
+  const limit = haystackLen - needle.length
+  outer: for (let i = start; i <= limit; i++) {
     for (let j = 0; j < needle.length; j++) {
       if (haystack[i + j] !== needle[j]) continue outer
     }

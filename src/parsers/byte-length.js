@@ -7,17 +7,28 @@ export function byteLengthParser(options = {}) {
   if (length < 1) throw new Error('length must be >= 1')
 
   const emitter = new EventEmitter()
-  let buffer = new Uint8Array(0)
+  let buf = new Uint8Array(Math.max(length * 2, 256))
+  let len = 0
+
+  function ensureCapacity(needed) {
+    if (needed <= buf.length) return
+    let cap = buf.length
+    while (cap < needed) cap *= 2
+    const next = new Uint8Array(cap)
+    next.set(buf.subarray(0, len))
+    buf = next
+  }
 
   function push(chunk) {
-    const next = new Uint8Array(buffer.length + chunk.length)
-    next.set(buffer)
-    next.set(chunk, buffer.length)
-    buffer = next
+    ensureCapacity(len + chunk.length)
+    buf.set(chunk, len)
+    len += chunk.length
 
-    while (buffer.length >= length) {
-      emitter.emit('data', buffer.slice(0, length))
-      buffer = buffer.slice(length)
+    while (len >= length) {
+      emitter.emit('data', buf.slice(0, length))
+      const remaining = len - length
+      if (remaining > 0) buf.copyWithin(0, length, len)
+      len = remaining
     }
   }
 

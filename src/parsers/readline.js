@@ -10,18 +10,26 @@ export function readlineParser(options = {}) {
 
   // Wrap the inner emitter to decode data to string
   const origOn = inner.on.bind(inner)
+  const origOnce = inner.once.bind(inner)
+  const origOff = inner.off.bind(inner)
   const listeners = new Map()
 
+  function wrapFn(fn) {
+    const wrapped = (buf) => fn(decoder.decode(buf))
+    listeners.set(fn, wrapped)
+    return wrapped
+  }
+
   inner.on = function (event, fn) {
-    if (event === 'data') {
-      const wrapped = (buf) => fn(decoder.decode(buf))
-      listeners.set(fn, wrapped)
-      return origOn('data', wrapped)
-    }
+    if (event === 'data') return origOn('data', wrapFn(fn))
     return origOn(event, fn)
   }
 
-  const origOff = inner.off.bind(inner)
+  inner.once = function (event, fn) {
+    if (event === 'data') return origOnce('data', wrapFn(fn))
+    return origOnce(event, fn)
+  }
+
   inner.off = function (event, fn) {
     if (event === 'data' && listeners.has(fn)) {
       const wrapped = listeners.get(fn)
@@ -30,6 +38,9 @@ export function readlineParser(options = {}) {
     }
     return origOff(event, fn)
   }
+
+  // Alias removeListener to off for full EventEmitter compat
+  inner.removeListener = inner.off
 
   return inner
 }
