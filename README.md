@@ -13,13 +13,14 @@ bun install bun-serialport
 ```js
 import { SerialPort, readlineParser } from 'bun-serialport'
 
-const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200 })
+const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200, autoOpen: false })
 const lines = port.pipe(readlineParser())
 
 lines.on('data', (line) => {
   console.log('received:', line)
 })
 
+await port.open()
 await port.write('HELLO\n')
 ```
 

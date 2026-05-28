@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events'
 import {
   openPort, closePort, writePort, readPort,
   updateBaudRate, setModemLines, getModemLines,
-  flushPort, drainPort
+  flushPort, drainPort, validateOpenOptions
 } from './bindings/posix.js'
 
 const DEFAULT_READ_BUFFER_SIZE = 65536
@@ -22,21 +22,26 @@ export class SerialPort extends EventEmitter {
   #readBuf
   #readInterval
   #readTimer = null
+  #openingPromise = null
 
   constructor(options) {
     super()
     if (!options || !options.path) throw new Error('options.path is required')
-    if (!options.baudRate) throw new Error('options.baudRate is required')
+    if (options.baudRate === undefined) throw new Error('options.baudRate is required')
+    validateOpenOptions(options)
 
     this.#path = options.path
     this.#baudRate = options.baudRate
     this.#options = { ...options }
-    this.#readBuf = new Uint8Array(options.readBufferSize || DEFAULT_READ_BUFFER_SIZE)
-    this.#readInterval = options.readInterval || DEFAULT_READ_INTERVAL_MS
+    this.#readBuf = new Uint8Array(options.readBufferSize ?? DEFAULT_READ_BUFFER_SIZE)
+    this.#readInterval = options.readInterval ?? DEFAULT_READ_INTERVAL_MS
 
     if (options.autoOpen !== false) {
       // Defer to next tick so caller can attach event listeners
-      queueMicrotask(() => this.open().catch(err => this.emit('error', err)))
+      this.#openingPromise = Promise.resolve()
+        .then(() => this.#performOpen())
+        .finally(() => { this.#openingPromise = null })
+      this.#openingPromise.catch(err => this.emit('error', err))
     }
   }
 
@@ -46,7 +51,14 @@ export class SerialPort extends EventEmitter {
 
   async open() {
     if (this.#isOpen) throw new Error('Port is already open')
+    if (this.#openingPromise) return this.#openingPromise
 
+    this.#openingPromise = this.#performOpen()
+      .finally(() => { this.#openingPromise = null })
+    return this.#openingPromise
+  }
+
+  async #performOpen() {
     try {
       this.#fd = openPort(this.#path, this.#options)
       this.#isOpen = true
@@ -60,6 +72,7 @@ export class SerialPort extends EventEmitter {
   }
 
   async close() {
+    if (this.#openingPromise) await this.#openingPromise
     if (!this.#isOpen) throw new Error('Port is not open')
     if (this.#isClosing) return
 
@@ -80,43 +93,37 @@ export class SerialPort extends EventEmitter {
   }
 
   async write(data) {
-    if (!this.#isOpen || this.#isClosing) {
-      throw new Error('Port is not open')
-    }
-
-    const buf = typeof data === 'string'
-      ? Buffer.from(data, 'utf-8')
-      : data
-
-    return writePort(this.#fd, buf)
+    await this.#ensureOpen()
+    return await writePort(this.#fd, data)
   }
 
   async update(options) {
-    if (!this.#isOpen) throw new Error('Port is not open')
+    await this.#ensureOpen()
 
     if (options.baudRate !== undefined) {
       updateBaudRate(this.#fd, options.baudRate)
       this.#baudRate = options.baudRate
+      this.#options = { ...this.#options, baudRate: options.baudRate }
     }
   }
 
   async set(flags) {
-    if (!this.#isOpen) throw new Error('Port is not open')
+    await this.#ensureOpen()
     setModemLines(this.#fd, flags)
   }
 
   async get() {
-    if (!this.#isOpen) throw new Error('Port is not open')
+    await this.#ensureOpen()
     return getModemLines(this.#fd)
   }
 
   async flush() {
-    if (!this.#isOpen) throw new Error('Port is not open')
+    await this.#ensureOpen()
     flushPort(this.#fd)
   }
 
   async drain() {
-    if (!this.#isOpen) throw new Error('Port is not open')
+    await this.#ensureOpen()
     drainPort(this.#fd)
   }
 
@@ -137,6 +144,13 @@ export class SerialPort extends EventEmitter {
   }
 
   // --- Private ---
+
+  async #ensureOpen() {
+    if (this.#openingPromise) await this.#openingPromise
+    if (!this.#isOpen || this.#isClosing) {
+      throw new Error('Port is not open')
+    }
+  }
 
   #startReading() {
     // Non-blocking read loop using setInterval.

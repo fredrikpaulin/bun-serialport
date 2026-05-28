@@ -12,6 +12,7 @@ export function delimiterParser(options = {}) {
     : typeof delimiter === 'string'
       ? new TextEncoder().encode(delimiter)
       : new Uint8Array(delimiter)
+  if (delim.length < 1) throw new Error('delimiter must not be empty')
 
   const emitter = new EventEmitter()
   let buf = new Uint8Array(256)
@@ -38,9 +39,7 @@ export function delimiterParser(options = {}) {
       if (idx === -1) break
 
       const end = includeDelimiter ? idx + delim.length : idx
-      if (end > start) {
-        emitter.emit('data', buf.slice(start, end))
-      }
+      emitter.emit('data', buf.slice(start, end))
       start = idx + delim.length
     }
 

@@ -115,10 +115,17 @@ const LINUX_BAUD_MAP = {
   4000000: 0x100f
 }
 
+export const SUPPORTED_BAUD_RATES = Object.freeze(
+  Object.keys(LINUX_BAUD_MAP)
+    .map(Number)
+    .filter((rate) => rate > 0)
+    .sort((a, b) => a - b)
+)
+
 export function encodeBaudRate(rate) {
-  if (IS_DARWIN) return rate // macOS uses literal values
   const encoded = LINUX_BAUD_MAP[rate]
   if (encoded === undefined) throw new Error(`Unsupported baud rate: ${rate}`)
+  if (IS_DARWIN) return rate // macOS uses literal values
   return encoded
 }
 

@@ -9,6 +9,14 @@ test('SerialPort requires baudRate', () => {
   expect(() => new SerialPort({ path: '/dev/null' })).toThrow('baudRate is required')
 })
 
+test('SerialPort rejects invalid options before opening', () => {
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 12345, autoOpen: false })).toThrow('Unsupported baud rate')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, stopBits: 3, autoOpen: false })).toThrow('Invalid stop bits')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, parity: 'mark', autoOpen: false })).toThrow('Invalid parity')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, readBufferSize: 0, autoOpen: false })).toThrow('Invalid read buffer size')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, readInterval: 0, autoOpen: false })).toThrow('Invalid read interval')
+})
+
 test('SerialPort constructor sets properties', () => {
   const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200, autoOpen: false })
   expect(port.path).toBe('/dev/ttyUSB0')
@@ -18,15 +26,15 @@ test('SerialPort constructor sets properties', () => {
 
 test('SerialPort write rejects when closed', async () => {
   const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, autoOpen: false })
-  expect(port.write(new Uint8Array([1]))).rejects.toThrow('Port is not open')
+  await expect(port.write(new Uint8Array([1]))).rejects.toThrow('Port is not open')
 })
 
 test('SerialPort close rejects when not open', async () => {
   const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, autoOpen: false })
-  expect(port.close()).rejects.toThrow('Port is not open')
+  await expect(port.close()).rejects.toThrow('Port is not open')
 })
 
 test('SerialPort update rejects when not open', async () => {
   const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, autoOpen: false })
-  expect(port.update({ baudRate: 19200 })).rejects.toThrow('Port is not open')
+  await expect(port.update({ baudRate: 19200 })).rejects.toThrow('Port is not open')
 })

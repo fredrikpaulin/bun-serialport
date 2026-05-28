@@ -9,6 +9,7 @@ import { join } from 'node:path'
 const IS_LINUX = platform() === 'linux'
 
 async function exists(path) {
+  // Bun.file().exists() only covers regular files here; /sys and /dev need access().
   try { await access(path); return true } catch { return false }
 }
 

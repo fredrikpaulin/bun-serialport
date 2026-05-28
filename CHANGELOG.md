@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `SerialPort` now waits for a pending auto-open before writes and other open-only operations run.
+- `update({ baudRate })` now keeps the stored options in sync, so close/reopen uses the updated baud rate.
+- Zero-byte reads are treated as EOF/disconnect instead of "no data yet".
+- Unsupported baud rates, invalid parity, invalid stop bits, and invalid read buffer settings now fail before opening hardware.
+- Empty delimiters now throw instead of hanging the parser. Consecutive delimiters now emit empty messages, preserving blank lines.
+- Async rejection tests now await the Promise assertions.
+
+### Improved
+- `writePort()` yields between EAGAIN retries instead of spinning synchronously.
+- String writes and FFI path encoding use `TextEncoder` instead of `Buffer.from()`.
+- `byteLengthParser` compacts its buffer once per push instead of once per emitted frame.
+- Published package contents now include linked docs and the changelog.
+
 ## 0.1.1 — 2026-04-13
 
 Codebase sweep: bug fixes, performance, and Bun optimization.

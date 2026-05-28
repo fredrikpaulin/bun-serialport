@@ -20,10 +20,13 @@ const port = new SerialPort({
   xoff: false,              // software flow control (default: false)
   autoOpen: true,           // open immediately (default: true)
   readBufferSize: 65536,    // read buffer size in bytes (default: 65536)
+  readInterval: 1,           // read poll interval in ms (default: 1)
 })
 ```
 
-When `autoOpen` is `true` (default), the port opens on the next microtask. Attach event listeners before awaiting any async operations.
+When `autoOpen` is `true` (default), the port opens on the next microtask. Attach event listeners before awaiting any async operations. Methods that need an open port wait for the pending open attempt before running.
+
+Supported baud rates: `110`, `300`, `600`, `1200`, `2400`, `4800`, `9600`, `19200`, `38400`, `57600`, `115200`, `230400`, `460800`, `500000`, `576000`, `921600`, `1000000`, `1152000`, `1500000`, `2000000`, `2500000`, `3000000`, `3500000`, `4000000`.
 
 ### Properties
 
@@ -37,7 +40,7 @@ All methods return Promises.
 
 - `port.open()` — open the port (only needed if `autoOpen: false`)
 - `port.close()` — close the port
-- `port.write(data)` — write `Uint8Array`, `Buffer`, or `string` (UTF-8 encoded)
+- `port.write(data)` — write `Uint8Array`, `ArrayBuffer`, an array of bytes, or `string` (UTF-8 encoded)
 - `port.update({ baudRate })` — change baud rate on an open port
 - `port.set({ dtr, rts })` — set modem control lines (`true`/`false`)
 - `port.get()` — returns `{ cts, dsr, dcd, ri }` modem status booleans

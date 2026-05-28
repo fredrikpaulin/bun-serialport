@@ -53,6 +53,23 @@ test('delimiterParser includeDelimiter option', () => {
   expect(Array.from(results[1])).toEqual([0x42, 0x0a])
 })
 
+test('delimiterParser emits empty messages between delimiters', () => {
+  const parser = delimiterParser({ delimiter: '\n' })
+  const results = []
+  parser.on('data', (d) => results.push(d))
+
+  parser.push(new TextEncoder().encode('\nhello\n\n'))
+
+  expect(results.length).toBe(3)
+  expect(new TextDecoder().decode(results[0])).toBe('')
+  expect(new TextDecoder().decode(results[1])).toBe('hello')
+  expect(new TextDecoder().decode(results[2])).toBe('')
+})
+
+test('delimiterParser rejects empty delimiter', () => {
+  expect(() => delimiterParser({ delimiter: '' })).toThrow('delimiter must not be empty')
+})
+
 // --- byteLengthParser ---
 
 test('byteLengthParser emits fixed-size chunks', () => {
@@ -80,6 +97,22 @@ test('byteLengthParser across multiple chunks', () => {
   expect(Array.from(results[0])).toEqual([1, 2, 3, 4])
 })
 
+test('byteLengthParser emits many chunks without losing remainder', () => {
+  const parser = byteLengthParser({ length: 2 })
+  const results = []
+  parser.on('data', (d) => results.push(d))
+
+  parser.push(new Uint8Array([1, 2, 3, 4, 5, 6, 7]))
+  parser.push(new Uint8Array([8]))
+
+  expect(results.map((chunk) => Array.from(chunk))).toEqual([
+    [1, 2],
+    [3, 4],
+    [5, 6],
+    [7, 8],
+  ])
+})
+
 test('byteLengthParser rejects length < 1', () => {
   expect(() => byteLengthParser({ length: 0 })).toThrow('length must be >= 1')
 })
@@ -104,4 +137,26 @@ test('readlineParser with custom delimiter', () => {
   parser.push(new TextEncoder().encode('line1\r\nline2\r\n'))
 
   expect(results).toEqual(['line1', 'line2'])
+})
+
+test('readlineParser preserves blank lines', () => {
+  const parser = readlineParser()
+  const results = []
+  parser.on('data', (d) => results.push(d))
+
+  parser.push(new TextEncoder().encode('\nhello\n\n'))
+
+  expect(results).toEqual(['', 'hello', ''])
+})
+
+test('readlineParser removeListener detaches listener', () => {
+  const parser = readlineParser()
+  const results = []
+  const listener = (d) => results.push(d)
+
+  parser.on('data', listener)
+  parser.removeListener('data', listener)
+  parser.push(new TextEncoder().encode('hello\n'))
+
+  expect(results).toEqual([])
 })

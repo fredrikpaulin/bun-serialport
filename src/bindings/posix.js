@@ -17,6 +17,7 @@ import { platform } from 'node:os'
 
 const IS_LINUX = platform() === 'linux'
 const IS_DARWIN = platform() === 'darwin'
+const textEncoder = new TextEncoder()
 
 // Load libc
 const LIBC_PATH = IS_LINUX ? 'libc.so.6' : 'libSystem.B.dylib'
@@ -62,6 +63,51 @@ function errnoError(syscall) {
   return err
 }
 
+function unsupportedOption(name, value) {
+  throw new Error(`Invalid ${name}: ${value}`)
+}
+
+function validateBaudRate(rate) {
+  if (!Number.isInteger(rate) || rate <= 0) {
+    throw new Error(`Unsupported baud rate: ${rate}`)
+  }
+  return encodeBaudRate(rate)
+}
+
+function toBytes(data) {
+  if (data instanceof Uint8Array) return data
+  if (typeof data === 'string') return textEncoder.encode(data)
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+  if (Array.isArray(data)) return new Uint8Array(data)
+  throw new TypeError('write data must be a Uint8Array, ArrayBuffer, array of bytes, or string')
+}
+
+export function validateOpenOptions(options = {}) {
+  const {
+    baudRate = 9600,
+    dataBits = 8,
+    stopBits = 1,
+    parity = 'none',
+    readBufferSize,
+    readInterval,
+  } = options
+
+  validateBaudRate(baudRate)
+  dataBitsFlag(dataBits)
+
+  if (stopBits !== 1 && stopBits !== 2) unsupportedOption('stop bits', stopBits)
+  if (parity !== 'none' && parity !== 'even' && parity !== 'odd') unsupportedOption('parity', parity)
+  if (readBufferSize !== undefined && (!Number.isInteger(readBufferSize) || readBufferSize < 1)) {
+    unsupportedOption('read buffer size', readBufferSize)
+  }
+  if (readInterval !== undefined && (!Number.isFinite(readInterval) || readInterval < 1)) {
+    unsupportedOption('read interval', readInterval)
+  }
+}
+
 // --- termios struct helpers ---
 
 function readFlag(buf, offset) {
@@ -90,7 +136,9 @@ function writeSpeed(buf, offset, value) {
 
 // --- Public API ---
 
-export function openPort(path, options) {
+export function openPort(path, options = {}) {
+  validateOpenOptions(options)
+
   const {
     baudRate = 9600,
     dataBits = 8,
@@ -102,7 +150,7 @@ export function openPort(path, options) {
   } = options
 
   // Open the device file
-  const pathBuf = Buffer.from(path + '\0', 'utf-8')
+  const pathBuf = textEncoder.encode(path + '\0')
   const fd = libc.symbols.open(ptr(pathBuf), O_RDWR | O_NOCTTY | O_NONBLOCK)
   if (fd < 0) throw errnoError('open')
 
@@ -166,7 +214,7 @@ export function openPort(path, options) {
   termiosBytes[ccOffset + VTIME] = 0
 
   // Set baud rate
-  const baudCode = encodeBaudRate(baudRate)
+  const baudCode = validateBaudRate(baudRate)
   if (IS_LINUX) {
     // Linux: write speed into c_ispeed and c_ospeed fields, and also
     // use cfsetispeed/cfsetospeed for the flag bits
@@ -201,9 +249,8 @@ export function closePort(fd) {
 
 const MAX_EAGAIN_RETRIES = 1000
 
-export function writePort(fd, data) {
-  // data should be Uint8Array or Buffer
-  const buf = data instanceof Uint8Array ? data : Buffer.from(data, 'utf-8')
+export async function writePort(fd, data) {
+  const buf = toBytes(data)
   let offset = 0
   let eagainCount = 0
   while (offset < buf.length) {
@@ -216,9 +263,17 @@ export function writePort(fd, data) {
         if (++eagainCount > MAX_EAGAIN_RETRIES) {
           throw new Error('write: device not accepting data (EAGAIN limit exceeded)')
         }
+        await Bun.sleep(1)
         continue
       }
       throw errnoError('write')
+    }
+    if (written === 0) {
+      if (++eagainCount > MAX_EAGAIN_RETRIES) {
+        throw new Error('write: device accepted zero bytes repeatedly')
+      }
+      await Bun.sleep(1)
+      continue
     }
     eagainCount = 0
     offset += written
@@ -234,16 +289,23 @@ export function readPort(fd, buffer) {
     if (code === 11 || code === 35) return 0 // EAGAIN — no data available
     throw errnoError('read')
   }
+  if (n === 0) {
+    const err = new Error('read: device returned EOF')
+    err.code = 'EOF'
+    err.syscall = 'read'
+    throw err
+  }
   return n
 }
 
 export function updateBaudRate(fd, baudRate) {
   const termiosBuf = new ArrayBuffer(TERMIOS_SIZE)
-  const termiosPtr = ptr(new Uint8Array(termiosBuf))
+  const termiosBytes = new Uint8Array(termiosBuf)
+  const termiosPtr = ptr(termiosBytes)
 
   if (libc.symbols.tcgetattr(fd, termiosPtr) < 0) throw errnoError('tcgetattr')
 
-  const baudCode = encodeBaudRate(baudRate)
+  const baudCode = validateBaudRate(baudRate)
   if (libc.symbols.cfsetispeed(termiosPtr, baudCode) < 0) throw errnoError('cfsetispeed')
   if (libc.symbols.cfsetospeed(termiosPtr, baudCode) < 0) throw errnoError('cfsetospeed')
 
@@ -257,10 +319,11 @@ export function updateBaudRate(fd, baudRate) {
 }
 
 export function setModemLines(fd, flags) {
-  const { dtr, rts, brk } = flags
+  const { dtr, rts } = flags
   const intBuf = new ArrayBuffer(4)
   const intView = new DataView(intBuf)
-  const intPtr = ptr(new Uint8Array(intBuf))
+  const intBytes = new Uint8Array(intBuf)
+  const intPtr = ptr(intBytes)
 
   // Set lines that are explicitly true
   let bitsToSet = 0
@@ -284,7 +347,8 @@ export function setModemLines(fd, flags) {
 export function getModemLines(fd) {
   const intBuf = new ArrayBuffer(4)
   const intView = new DataView(intBuf)
-  const intPtr = ptr(new Uint8Array(intBuf))
+  const intBytes = new Uint8Array(intBuf)
+  const intPtr = ptr(intBytes)
 
   if (libc.symbols.ioctl(fd, TIOCMGET, intPtr) < 0) throw errnoError('ioctl TIOCMGET')
 

@@ -38,6 +38,10 @@ test('encodeBaudRate handles common rates', () => {
   }
 })
 
+test('encodeBaudRate rejects unsupported rates', () => {
+  expect(() => encodeBaudRate(12345)).toThrow('Unsupported baud rate')
+})
+
 test('termios struct size is correct for platform', () => {
   if (IS_LINUX) {
     expect(TERMIOS_SIZE).toBe(60)

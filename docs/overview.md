@@ -10,7 +10,7 @@ const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200 })
 
 Under the hood this does roughly what you'd do in C: opens the device file with `O_RDWR | O_NOCTTY | O_NONBLOCK`, gets the current termios struct with `tcgetattr`, configures it for raw mode at the requested baud rate, and applies it with `tcsetattr`. The port is then ready for I/O.
 
-Once open, a read loop polls the file descriptor every 1ms for incoming data. When bytes arrive they're emitted as a `Uint8Array` on the `'data'` event. Writes go straight to the OS — `port.write()` resolves once the kernel accepts the bytes.
+Once open, a read loop polls the file descriptor every 1ms by default for incoming data. When bytes arrive they're emitted as a `Uint8Array` on the `'data'` event. Writes go straight to the OS — `port.write()` resolves once the kernel accepts the bytes. If the kernel reports backpressure, writes yield briefly before retrying instead of spinning in place.
 
 ## Layers
 
@@ -30,7 +30,7 @@ macOS and Linux are supported. Both use POSIX termios, so the same code path han
 
 All data flows as `Uint8Array`. This is the natural format for binary protocols common in robotics and sensor work. If you're working with text, the `readlineParser` decodes to strings for you.
 
-Writes accept `Uint8Array`, `Buffer`, or plain strings (UTF-8 encoded automatically).
+Writes accept `Uint8Array`, `ArrayBuffer`, arrays of bytes, or plain strings (UTF-8 encoded automatically).
 
 ## Error handling
 

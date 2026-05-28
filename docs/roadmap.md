@@ -23,7 +23,7 @@ Port enumeration on macOS currently returns device paths but no manufacturer or 
 
 ## v0.6.0 — Custom baud rates
 
-Some hardware (GPS modules, certain microcontrollers) uses non-standard baud rates like 250000 or 500000. Linux supports this via `BOTHER` and the `termios2` struct. macOS supports arbitrary rates via `iossiospeed` ioctl. This version will add support for any integer baud rate on both platforms.
+Some hardware uses non-standard baud rates outside the built-in POSIX table. Linux supports this via `BOTHER` and the `termios2` struct. macOS supports arbitrary rates via `iossiospeed` ioctl. This version will add support for any integer baud rate on both platforms.
 
 ## Future considerations
 

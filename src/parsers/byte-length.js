@@ -24,10 +24,16 @@ export function byteLengthParser(options = {}) {
     buf.set(chunk, len)
     len += chunk.length
 
-    while (len >= length) {
-      emitter.emit('data', buf.slice(0, length))
-      const remaining = len - length
-      if (remaining > 0) buf.copyWithin(0, length, len)
+    const chunkCount = Math.floor(len / length)
+    for (let i = 0; i < chunkCount; i++) {
+      const start = i * length
+      emitter.emit('data', buf.slice(start, start + length))
+    }
+
+    if (chunkCount > 0) {
+      const consumed = chunkCount * length
+      const remaining = len - consumed
+      if (remaining > 0) buf.copyWithin(0, consumed, len)
       len = remaining
     }
   }
