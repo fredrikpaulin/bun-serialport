@@ -1,10 +1,14 @@
 # Roadmap
 
-## v0.2.0 — Event-driven reads
+## Event-driven reads and non-blocking drain
 
 The current read loop polls the file descriptor every 1ms with `setInterval`. It works, but it burns CPU checking an empty buffer. The plan is to replace this with proper event-driven I/O once Bun exposes fd-level polling (epoll on Linux, kqueue on macOS). If Bun doesn't add this soon, we'll write a small C shim that does `poll()` on the serial fd and writes a wake byte to a pipe that Bun can watch natively.
 
+The same revisit should move `tcdrain` off the event loop. Today `drain()` (and the drain inside `update()`) blocks the whole process if a flow-controlled port wedges — see "What blocks, and when it matters" in the overview. Async FFI or a worker would bound the damage to the affected port.
+
 ## v0.3.0 — Mock binding for testing
+
+*(Partly covered already: the test suite ships a pty-based helper, `tests/helpers/pty.js`, which exercises the real POSIX stack. The mock binding remains useful for protocol tests that shouldn't need a tty at all.)*
 
 A mock serial port that lives entirely in memory. You create a pair of virtual ports — write to one, read from the other. This lets you test serial protocol code in CI without hardware. Inspired by `@serialport/binding-mock` from node-serialport, but adapted to work with our EventEmitter API.
 
@@ -20,10 +24,6 @@ Parsers commonly needed in robotics and embedded work:
 ## v0.5.0 — macOS USB metadata
 
 Port enumeration on macOS currently returns device paths but no manufacturer or serial number info. This version will use `ioreg` (or the IOKit framework via FFI) to read USB device metadata, matching what the Linux implementation already provides through sysfs.
-
-## v0.6.0 — Custom baud rates
-
-Some hardware uses non-standard baud rates outside the built-in POSIX table. Linux supports this via `BOTHER` and the `termios2` struct. macOS supports arbitrary rates via `iossiospeed` ioctl. This version will add support for any integer baud rate on both platforms.
 
 ## Future considerations
 

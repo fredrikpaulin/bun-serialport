@@ -14,10 +14,17 @@ if (!IS_LINUX && !IS_DARWIN) {
 export const O_RDWR = 2
 export const O_NOCTTY = IS_LINUX ? 256 : 0x20000
 export const O_NONBLOCK = IS_LINUX ? 2048 : 4
+export const O_CLOEXEC = IS_LINUX ? 0x80000 : 0x1000000
 
-// --- fcntl ---
-export const F_GETFL = IS_LINUX ? 3 : 3
-export const F_SETFL = IS_LINUX ? 4 : 4
+// --- flock ---
+export const LOCK_EX = 2
+export const LOCK_NB = 4
+
+// --- errno ---
+// EAGAIN differs per platform; the other platform's value is EDEADLK — never
+// treat it as "try again" (audit finding B5).
+export const EAGAIN = IS_LINUX ? 11 : 35
+export const EINTR = 4
 
 // --- tcsetattr actions ---
 export const TCSANOW = 0
@@ -82,6 +89,10 @@ export const TIOCMSET = IS_LINUX ? 0x5418 : 0x8004746d
 export const TIOCMBIS = IS_LINUX ? 0x5416 : 0x8004746c
 export const TIOCMBIC = IS_LINUX ? 0x5417 : 0x8004746b
 
+// --- ioctl break signal ---
+export const TIOCSBRK = IS_LINUX ? 0x5427 : 0x2000747b
+export const TIOCCBRK = IS_LINUX ? 0x5428 : 0x2000747a
+
 // --- Modem line bits ---
 export const TIOCM_DTR = 0x002
 export const TIOCM_RTS = 0x004
@@ -108,7 +119,8 @@ export const TERMIOS_OFFSETS = IS_LINUX
 // --- Baud rate mapping ---
 // Linux uses encoded constants; macOS uses the literal baud rate value.
 const LINUX_BAUD_MAP = {
-  0: 0, 110: 3, 300: 7, 600: 8, 1200: 9, 2400: 11, 4800: 12,
+  0: 0, 50: 1, 75: 2, 110: 3, 134: 4, 150: 5, 200: 6,
+  300: 7, 600: 8, 1200: 9, 1800: 10, 2400: 11, 4800: 12,
   9600: 13, 19200: 14, 38400: 15, 57600: 0x1001, 115200: 0x1002,
   230400: 0x1003, 460800: 0x1004, 500000: 0x1005, 576000: 0x1006,
   921600: 0x1007, 1000000: 0x1008, 1152000: 0x1009, 1500000: 0x100a,
@@ -123,12 +135,30 @@ export const SUPPORTED_BAUD_RATES = Object.freeze(
     .sort((a, b) => a - b)
 )
 
-export function encodeBaudRate(rate) {
-  const encoded = LINUX_BAUD_MAP[rate]
-  if (encoded === undefined) throw new Error(`Unsupported baud rate: ${rate}`)
-  if (IS_DARWIN) return rate // macOS uses literal values
-  return encoded
+// A rate in the classic Bxxx table. Rates outside it are still usable —
+// they take the platform's custom-rate path (termios2/BOTHER on Linux,
+// IOSSIOSPEED on macOS).
+export function isStandardBaudRate(rate) {
+  return LINUX_BAUD_MAP[rate] !== undefined
 }
+
+export function encodeBaudRate(rate) {
+  if (IS_DARWIN) return rate // macOS uses literal values
+  return LINUX_BAUD_MAP[rate] // undefined for custom rates — caller branches
+}
+
+// --- Custom baud rate plumbing ---
+// Linux: struct termios2 from asm-generic/termbits.h — NCCS is 19 here, not
+// the glibc 32. Layout: 4 x u32 flags, c_line u8, c_cc[19], c_ispeed u32 at
+// 36, c_ospeed u32 at 40, total 44 bytes.
+export const TERMIOS2_SIZE = 44
+export const TERMIOS2_OFFSETS = { c_cflag: 8, c_ispeed: 36, c_ospeed: 40 }
+export const TCGETS2 = 0x802c542a
+export const TCSETS2 = 0x402c542b
+export const BOTHER = 0x1000
+export const CBAUD = 0x100f
+// macOS: _IOW('T', 2, speed_t) with an 8-byte speed_t
+export const IOSSIOSPEED = 0x80085402
 
 export function dataBitsFlag(bits) {
   switch (bits) {

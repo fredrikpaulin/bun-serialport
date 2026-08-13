@@ -8,7 +8,7 @@ bun-serialport talks to serial hardware through the same POSIX interface the ope
 const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200 })
 ```
 
-Under the hood this does roughly what you'd do in C: opens the device file with `O_RDWR | O_NOCTTY | O_NONBLOCK`, gets the current termios struct with `tcgetattr`, configures it for raw mode at the requested baud rate, and applies it with `tcsetattr`. The port is then ready for I/O.
+Under the hood this does roughly what you'd do in C: opens the device file with `O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC`, takes an exclusive `flock` (unless `lock: false`), gets the current termios struct with `tcgetattr`, configures it for raw mode at the requested baud rate, and applies it with `tcsetattr`. The port is then ready for I/O.
 
 Once open, a read loop polls the file descriptor every 1ms by default for incoming data. When bytes arrive they're emitted as a `Uint8Array` on the `'data'` event. Writes go straight to the OS — `port.write()` resolves once the kernel accepts the bytes. If the kernel reports backpressure, writes yield briefly before retrying instead of spinning in place.
 
@@ -31,6 +31,29 @@ macOS and Linux are supported. Both use POSIX termios, so the same code path han
 All data flows as `Uint8Array`. This is the natural format for binary protocols common in robotics and sensor work. If you're working with text, the `readlineParser` decodes to strings for you.
 
 Writes accept `Uint8Array`, `ArrayBuffer`, arrays of bytes, or plain strings (UTF-8 encoded automatically).
+
+## What blocks, and when it matters
+
+All FFI calls are synchronous — they run on Bun's event loop thread. For most
+operations this is invisible: a `read` returns immediately, a `write` hands
+bytes to the kernel and comes back. Two operations can genuinely wait:
+
+- `drain()` calls `tcdrain`, which blocks until the kernel has transmitted
+  everything queued for the port.
+- `update({ baudRate })` applies settings with drain semantics — pending
+  output finishes first.
+
+On a healthy port that wait is milliseconds. On a port with hardware flow
+control (`rtscts: true`) whose far side has stopped asserting CTS, it's
+unbounded — and because the call blocks the event loop, *everything* in the
+process stalls with it, including read loops for other ports. `close()`
+drains too, but swallows drain failures so a wedged device can't make a port
+unclosable.
+
+If you run multiple ports and one of them can wedge, treat `drain()` on that
+port as a hazard: prefer `hupcl`/reset strategies, or accept the stall. Event-
+driven I/O that moves these waits off the main thread is on the roadmap and
+depends on Bun exposing fd-level polling or async FFI.
 
 ## Error handling
 

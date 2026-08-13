@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Arbitrary baud rates. Rates outside the classic POSIX table (250000, 74880, 31250, ...) now work via `termios2`/`BOTHER` on Linux and `IOSSIOSPEED` on macOS. Legacy rates 50–1800 added to the standard table (#007, #008).
+- `set({ brk })` asserts/clears the break signal via TIOCSBRK/TIOCCBRK — needed by LIN, DMX512, and several bootloaders (#006).
+- `xany` option: any received character restarts XOFF-stopped output (#013).
+- `lock` option (default `true`): exclusive port access via `flock(LOCK_EX | LOCK_NB)`. A second open of a locked port fails fast with a clear error instead of silently sharing the byte stream (#003).
+
+- `list()` on Linux includes `pnpId` (the `/dev/serial/by-id` name) and `locationId` (sysfs USB devpath) for stable device identity across replugs (#012).
+
+### Improved
+- docs: the blocking behavior of `drain()`/`update()` under stalled hardware flow control is documented in the overview, with the async-FFI revisit noted in the roadmap (#011).
+
+### Fixed
+- Bytes failing the parity check are dropped (IGNPAR) instead of delivered as NUL (#005).
+- `set()` throws on unknown flags instead of silently ignoring them (#006).
+- The `close` event carries the originating error after a disconnect, so listeners can tell a vanished device from a deliberate close (#010).
+- Boolean options (`rtscts`, `xon`, `xoff`, `xany`, `hupcl`, `lock`, `autoOpen`) are validated before opening hardware (#015).
+- Writes are chained: concurrent `write()` calls no longer interleave under backpressure, `drain()` waits for bytes still in the JS retry loop, and `close()` waits for in-flight writes — a writer stuck on a full kernel buffer is interrupted instead of racing the fd close (#001).
+- EINTR is retried instead of treated as fatal in `read`, `write`, and `tcdrain` paths. A signal landing mid-read no longer produces a phantom disconnect (#002).
+- EAGAIN detection is platform-correct: 11 on Linux, 35 on macOS, instead of accepting both values on both platforms (#009).
+- The port fd is opened with O_CLOEXEC — spawned children no longer inherit it, so a subprocess can't silently hold the port (and its lock, and DTR) after the parent closes (#004).
+
+### Removed
+- The `fcntl` FFI symbol and F_GETFL/F_SETFL constants, declared since v0.1.0 and never called (#014).
+
 ## 0.2.0 — 2026-08-13
 
 Write-then-close no longer loses data, plus the accumulated lifecycle, validation, and parser fixes from the May audit.

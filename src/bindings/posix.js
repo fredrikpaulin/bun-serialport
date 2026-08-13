@@ -3,15 +3,18 @@
 
 import { dlopen, FFIType, ptr, toArrayBuffer, CString } from 'bun:ffi'
 import {
-  O_RDWR, O_NOCTTY, O_NONBLOCK,
+  O_RDWR, O_NOCTTY, O_NONBLOCK, O_CLOEXEC,
+  LOCK_EX, LOCK_NB,
   TCSADRAIN, TCSAFLUSH, TCIOFLUSH,
   CSIZE, CREAD, CLOCAL, CSTOPB, PARENB, PARODD, CRTSCTS, HUPCL,
-  INPCK, IXON, IXOFF,
+  INPCK, IGNPAR, IXON, IXOFF, IXANY,
   VMIN, VTIME, NCCS,
-  TIOCMGET, TIOCMBIS, TIOCMBIC,
+  TIOCMGET, TIOCMBIS, TIOCMBIC, TIOCSBRK, TIOCCBRK,
   TIOCM_DTR, TIOCM_RTS, TIOCM_CTS, TIOCM_DSR, TIOCM_CD, TIOCM_RI,
+  EAGAIN, EINTR,
   TERMIOS_SIZE, TCFLAG_SIZE, TERMIOS_OFFSETS,
-  encodeBaudRate, dataBitsFlag
+  TERMIOS2_SIZE, TERMIOS2_OFFSETS, TCGETS2, TCSETS2, BOTHER, CBAUD, IOSSIOSPEED,
+  encodeBaudRate, isStandardBaudRate, dataBitsFlag
 } from './constants.js'
 import { platform } from 'node:os'
 
@@ -33,7 +36,7 @@ const libc = dlopen(LIBC_PATH, {
   tcdrain: { args: [FFIType.i32], returns: FFIType.i32 },
   cfsetispeed: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
   cfsetospeed: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
-  fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
   ioctl: { args: [FFIType.i32, FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   strerror: { args: [FFIType.i32], returns: FFIType.ptr },
 })
@@ -71,7 +74,29 @@ function validateBaudRate(rate) {
   if (!Number.isInteger(rate) || rate <= 0) {
     throw new Error(`Unsupported baud rate: ${rate}`)
   }
-  return encodeBaudRate(rate)
+  return rate
+}
+
+// Rates outside the Bxxx table. Linux: termios2 with BOTHER, raw ioctl —
+// this bypasses glibc entirely, so the struct is the kernel's 44-byte one.
+// macOS: IOSSIOSPEED, which tells the driver the literal rate.
+function setCustomBaudRate(fd, rate) {
+  if (IS_LINUX) {
+    const t2 = new Uint8Array(TERMIOS2_SIZE)
+    const view = new DataView(t2.buffer)
+    const t2Ptr = ptr(t2)
+    if (libc.symbols.ioctl(fd, TCGETS2, t2Ptr) < 0) throw errnoError('ioctl TCGETS2')
+    let cflag = view.getUint32(TERMIOS2_OFFSETS.c_cflag, true)
+    cflag = (cflag & ~CBAUD & ~(CBAUD << 16)) | BOTHER // clear CIBAUD: input follows output
+    view.setUint32(TERMIOS2_OFFSETS.c_cflag, cflag >>> 0, true)
+    view.setUint32(TERMIOS2_OFFSETS.c_ispeed, rate, true)
+    view.setUint32(TERMIOS2_OFFSETS.c_ospeed, rate, true)
+    if (libc.symbols.ioctl(fd, TCSETS2, t2Ptr) < 0) throw errnoError('ioctl TCSETS2')
+  } else {
+    const speed = new Uint8Array(8)
+    new DataView(speed.buffer).setBigUint64(0, BigInt(rate), true)
+    if (libc.symbols.ioctl(fd, IOSSIOSPEED, ptr(speed)) < 0) throw errnoError('ioctl IOSSIOSPEED')
+  }
 }
 
 function toBytes(data) {
@@ -97,6 +122,12 @@ export function validateOpenOptions(options = {}) {
 
   validateBaudRate(baudRate)
   dataBitsFlag(dataBits)
+
+  for (const name of ['rtscts', 'xon', 'xoff', 'xany', 'hupcl', 'lock', 'autoOpen']) {
+    if (options[name] !== undefined && typeof options[name] !== 'boolean') {
+      unsupportedOption(name, options[name])
+    }
+  }
 
   if (stopBits !== 1 && stopBits !== 2) unsupportedOption('stop bits', stopBits)
   if (parity !== 'none' && parity !== 'even' && parity !== 'odd') unsupportedOption('parity', parity)
@@ -146,14 +177,28 @@ export function openPort(path, options = {}) {
     parity = 'none',
     rtscts = false,
     hupcl = true,
+    lock = true,
     xon = false,
     xoff = false,
+    xany = false,
   } = options
 
-  // Open the device file
+  // Open the device file. O_CLOEXEC so spawned children don't inherit the
+  // port — an inherited fd keeps DTR asserted and the lock held after the
+  // parent closes.
   const pathBuf = textEncoder.encode(path + '\0')
-  const fd = libc.symbols.open(ptr(pathBuf), O_RDWR | O_NOCTTY | O_NONBLOCK)
+  const fd = libc.symbols.open(ptr(pathBuf), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC)
   if (fd < 0) throw errnoError('open')
+
+  // Exclusive access. flock only guards against other flock users, but that
+  // covers the realistic failure: two of your own processes on one port.
+  if (lock) {
+    if (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) < 0) {
+      const cause = errnoError('flock')
+      libc.symbols.close(fd)
+      throw new Error(`Cannot lock ${path}: port may be in use by another process (${cause.message})`)
+    }
+  }
 
   // Get current termios — keep one Uint8Array alive so ptr() stays valid
   const termiosBuf = new ArrayBuffer(TERMIOS_SIZE)
@@ -200,11 +245,14 @@ export function openPort(path, options = {}) {
 
   writeFlag(termiosView, off.c_cflag, cflag)
 
-  // Input flags: raw mode — clear everything
-  let iflag = 0
+  // Input flags: raw mode. IGNPAR matches node-serialport — a byte that
+  // fails the parity check is dropped, not delivered as a NUL for the
+  // application to mistake for data.
+  let iflag = IGNPAR
   if (parity !== 'none') iflag |= INPCK
   if (xon) iflag |= IXON
   if (xoff) iflag |= IXOFF
+  if (xany) iflag |= IXANY
   writeFlag(termiosView, off.c_iflag, iflag)
 
   // Output flags: raw
@@ -220,9 +268,12 @@ export function openPort(path, options = {}) {
   termiosBytes[ccOffset + VMIN] = 1
   termiosBytes[ccOffset + VTIME] = 0
 
-  // Set baud rate
-  const baudCode = validateBaudRate(baudRate)
-  if (IS_LINUX) {
+  // Set baud rate. Standard rates ride the classic Bxxx table; custom rates
+  // apply everything else with a 9600 placeholder first, then switch speed
+  // through the platform's custom-rate mechanism after tcsetattr.
+  const standard = isStandardBaudRate(baudRate)
+  const baudCode = standard ? encodeBaudRate(baudRate) : encodeBaudRate(9600)
+  if (IS_LINUX && standard) {
     // Linux: write speed into c_ispeed and c_ospeed fields, and also
     // use cfsetispeed/cfsetospeed for the flag bits
     writeSpeed(termiosView, off.c_ispeed, baudCode)
@@ -244,6 +295,15 @@ export function openPort(path, options = {}) {
     throw errnoError('tcsetattr')
   }
 
+  if (!standard) {
+    try {
+      setCustomBaudRate(fd, baudRate)
+    } catch (err) {
+      libc.symbols.close(fd)
+      throw err
+    }
+  }
+
   // Flush any stale data
   libc.symbols.tcflush(fd, TCIOFLUSH)
 
@@ -256,7 +316,16 @@ export function closePort(fd) {
 
 const MAX_EAGAIN_RETRIES = 1000
 
-export async function writePort(fd, data) {
+function abortedError() {
+  const err = new Error('write aborted: port is closing')
+  err.code = 'ABORTED'
+  return err
+}
+
+// shouldAbort is consulted only when the write would otherwise sleep on a
+// full kernel buffer — a healthy write completes, a stuck one can be
+// interrupted by close() instead of waiting out the retry cap.
+export async function writePort(fd, data, shouldAbort) {
   const buf = toBytes(data)
   let offset = 0
   let eagainCount = 0
@@ -265,12 +334,15 @@ export async function writePort(fd, data) {
     const written = Number(libc.symbols.write(fd, ptr(slice), BigInt(slice.length)))
     if (written < 0) {
       const code = getErrno()
-      if (code === 11 || code === 35) {
-        // EAGAIN / EWOULDBLOCK — kernel buffer full
+      if (code === EINTR) continue // interrupted by a signal — retry, no budget spent
+      if (code === EAGAIN) {
+        // Kernel buffer full
         if (++eagainCount > MAX_EAGAIN_RETRIES) {
           throw new Error('write: device not accepting data (EAGAIN limit exceeded)')
         }
+        if (shouldAbort?.()) throw abortedError()
         await Bun.sleep(1)
+        if (shouldAbort?.()) throw abortedError()
         continue
       }
       throw errnoError('write')
@@ -279,6 +351,7 @@ export async function writePort(fd, data) {
       if (++eagainCount > MAX_EAGAIN_RETRIES) {
         throw new Error('write: device accepted zero bytes repeatedly')
       }
+      if (shouldAbort?.()) throw abortedError()
       await Bun.sleep(1)
       continue
     }
@@ -293,7 +366,9 @@ export function readPort(fd, buffer) {
   const n = Number(libc.symbols.read(fd, ptr(buffer), BigInt(buffer.length)))
   if (n < 0) {
     const code = getErrno()
-    if (code === 11 || code === 35) return 0 // EAGAIN — no data available
+    // EAGAIN: no data available. EINTR: a signal landed mid-read — treating
+    // it as fatal turned profiler ticks into phantom disconnects.
+    if (code === EAGAIN || code === EINTR) return 0
     throw errnoError('read')
   }
   if (n === 0) {
@@ -306,13 +381,21 @@ export function readPort(fd, buffer) {
 }
 
 export function updateBaudRate(fd, baudRate) {
+  validateBaudRate(baudRate)
+
+  if (!isStandardBaudRate(baudRate)) {
+    drainPort(fd) // match TCSADRAIN semantics: let pending output finish first
+    setCustomBaudRate(fd, baudRate)
+    return
+  }
+
   const termiosBuf = new ArrayBuffer(TERMIOS_SIZE)
   const termiosBytes = new Uint8Array(termiosBuf)
   const termiosPtr = ptr(termiosBytes)
 
   if (libc.symbols.tcgetattr(fd, termiosPtr) < 0) throw errnoError('tcgetattr')
 
-  const baudCode = validateBaudRate(baudRate)
+  const baudCode = encodeBaudRate(baudRate)
   if (libc.symbols.cfsetispeed(termiosPtr, baudCode) < 0) throw errnoError('cfsetispeed')
   if (libc.symbols.cfsetospeed(termiosPtr, baudCode) < 0) throw errnoError('cfsetospeed')
 
@@ -326,7 +409,14 @@ export function updateBaudRate(fd, baudRate) {
 }
 
 export function setModemLines(fd, flags) {
-  const { dtr, rts } = flags
+  // Unknown keys throw. Silent acceptance is how missing brk support stayed
+  // invisible for two releases.
+  for (const key of Object.keys(flags)) {
+    if (key !== 'dtr' && key !== 'rts' && key !== 'brk') {
+      throw new Error(`Invalid set() flag: ${key}`)
+    }
+  }
+  const { dtr, rts, brk } = flags
   const intBuf = new ArrayBuffer(4)
   const intView = new DataView(intBuf)
   const intBytes = new Uint8Array(intBuf)
@@ -348,6 +438,13 @@ export function setModemLines(fd, flags) {
   if (bitsToClear) {
     intView.setInt32(0, bitsToClear, true)
     if (libc.symbols.ioctl(fd, TIOCMBIC, intPtr) < 0) throw errnoError('ioctl TIOCMBIC')
+  }
+
+  if (brk === true) {
+    if (libc.symbols.ioctl(fd, TIOCSBRK, null) < 0) throw errnoError('ioctl TIOCSBRK')
+  }
+  if (brk === false) {
+    if (libc.symbols.ioctl(fd, TIOCCBRK, null) < 0) throw errnoError('ioctl TIOCCBRK')
   }
 }
 
@@ -373,5 +470,7 @@ export function flushPort(fd) {
 }
 
 export function drainPort(fd) {
-  if (libc.symbols.tcdrain(fd) < 0) throw errnoError('tcdrain')
+  while (libc.symbols.tcdrain(fd) < 0) {
+    if (getErrno() !== EINTR) throw errnoError('tcdrain')
+  }
 }

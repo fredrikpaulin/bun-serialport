@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
 import { SerialPort } from '../src/serialport.js'
+import { setModemLines } from '../src/bindings/posix.js'
 
 test('SerialPort requires path', () => {
   expect(() => new SerialPort({ baudRate: 9600 })).toThrow('path is required')
@@ -10,7 +11,9 @@ test('SerialPort requires baudRate', () => {
 })
 
 test('SerialPort rejects invalid options before opening', () => {
-  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 12345, autoOpen: false })).toThrow('Unsupported baud rate')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 0, autoOpen: false })).toThrow('Unsupported baud rate')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: -9600, autoOpen: false })).toThrow('Unsupported baud rate')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 115200.5, autoOpen: false })).toThrow('Unsupported baud rate')
   expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, stopBits: 3, autoOpen: false })).toThrow('Invalid stop bits')
   expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, parity: 'mark', autoOpen: false })).toThrow('Invalid parity')
   expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, readBufferSize: 0, autoOpen: false })).toThrow('Invalid read buffer size')
@@ -37,4 +40,17 @@ test('SerialPort close rejects when not open', async () => {
 test('SerialPort update rejects when not open', async () => {
   const port = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, autoOpen: false })
   await expect(port.update({ baudRate: 19200 })).rejects.toThrow('Port is not open')
+})
+
+test('SerialPort rejects non-boolean flag options', () => {
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, hupcl: 'yes', autoOpen: false })).toThrow('Invalid hupcl')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, rtscts: 'true', autoOpen: false })).toThrow('Invalid rtscts')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, xon: 1, autoOpen: false })).toThrow('Invalid xon')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, xany: 0, autoOpen: false })).toThrow('Invalid xany')
+  expect(() => new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600, lock: 'no', autoOpen: false })).toThrow('Invalid lock')
+})
+
+test('set() rejects unknown flags before touching the fd', () => {
+  expect(() => setModemLines(-1, { dsr: true })).toThrow('Invalid set() flag: dsr')
+  expect(() => setModemLines(-1, { break: true })).toThrow('Invalid set() flag: break')
 })
