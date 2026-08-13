@@ -18,6 +18,7 @@ const port = new SerialPort({
   rtscts: false,            // hardware flow control (default: false)
   xon: false,               // software flow control (default: false)
   xoff: false,              // software flow control (default: false)
+  hupcl: true,              // drop DTR/RTS on close (default: true)
   autoOpen: true,           // open immediately (default: true)
   readBufferSize: 65536,    // read buffer size in bytes (default: 65536)
   readInterval: 1,           // read poll interval in ms (default: 1)
@@ -39,7 +40,7 @@ Supported baud rates: `110`, `300`, `600`, `1200`, `2400`, `4800`, `9600`, `1920
 All methods return Promises.
 
 - `port.open()` — open the port (only needed if `autoOpen: false`)
-- `port.close()` — close the port
+- `port.close()` — drain pending output, then close the port
 - `port.write(data)` — write `Uint8Array`, `ArrayBuffer`, an array of bytes, or `string` (UTF-8 encoded)
 - `port.update({ baudRate })` — change baud rate on an open port
 - `port.set({ dtr, rts })` — set modem control lines (`true`/`false`)
@@ -47,6 +48,12 @@ All methods return Promises.
 - `port.flush()` — discard buffered I/O data
 - `port.drain()` — wait for all output to be transmitted
 - `port.pipe(parser)` — wire a parser to receive data events, returns the parser
+
+Note: `write()` resolves when the OS accepts the bytes, not when they have
+left the wire. `close()` drains pending output before closing so a
+write-then-close sequence is safe. If your device resets when DTR drops
+(most Arduino/ESP dev boards auto-reset on a DTR edge), open the port with
+`hupcl: false` so closing does not reboot it.
 
 ### Events
 
