@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-08-13
+
+Write-then-close no longer loses data, plus the accumulated lifecycle, validation, and parser fixes from the May audit.
+
+### Added
+- `hupcl` option (default `true`, matching node-serialport). Pass `hupcl: false` to keep DTR asserted when the port closes — devices that auto-reset on a DTR edge (most Arduino/ESP dev boards) otherwise reboot on close.
 
 ### Fixed
+- `close()` now drains pending output (`tcdrain`) before closing the fd. `write()` resolves when the kernel accepts the bytes, not when they are transmitted, so an immediate close could discard buffered output on real hardware.
 - `SerialPort` now waits for a pending auto-open before writes and other open-only operations run.
 - `update({ baudRate })` now keeps the stored options in sync, so close/reopen uses the updated baud rate.
 - Zero-byte reads are treated as EOF/disconnect instead of "no data yet".
