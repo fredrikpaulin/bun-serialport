@@ -5,11 +5,18 @@
   "type": "module",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js",
-    "./parsers": "./src/parsers/index.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./parsers": {
+      "types": "./src/parsers/index.d.ts",
+      "default": "./src/parsers/index.js"
+    }
   },
   "scripts": {
-    "test": "bun test tests/"
+    "test": "bun test tests/",
+    "typecheck": "bun x tsc --noEmit -p tests/types"
   },
   "author": {
     "name": "Fredrik Paulin",
@@ -33,7 +40,10 @@
     "iot",
     "termios"
   ],
-  "os": ["darwin", "linux"],
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "engines": {
     "bun": ">=1.2.0"
   },
@@ -43,5 +53,6 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
-  ]
+  ],
+  "types": "./src/index.d.ts"
 }

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- TypeScript declarations ship with the package: `types` in package.json, `types` conditions in the exports map, typed event payloads, and a typed consumer fixture checked by `bun run typecheck`. No dependencies added — the declarations are standalone (#016, closes GitHub issue #1).
 - Arbitrary baud rates. Rates outside the classic POSIX table (250000, 74880, 31250, ...) now work via `termios2`/`BOTHER` on Linux and `IOSSIOSPEED` on macOS. Legacy rates 50–1800 added to the standard table (#007, #008).
 - `set({ brk })` asserts/clears the break signal via TIOCSBRK/TIOCCBRK — needed by LIN, DMX512, and several bootloaders (#006).
 - `xany` option: any received character restarts XOFF-stopped output (#013).
