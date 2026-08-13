@@ -23,6 +23,8 @@ export class SerialPort extends EventEmitter {
   #readInterval
   #readTimer = null
   #openingPromise = null
+  #writeChain = Promise.resolve()
+  #closeCause = null
 
   constructor(options) {
     super()
@@ -79,6 +81,10 @@ export class SerialPort extends EventEmitter {
     this.#isClosing = true
     this.#stopReading()
 
+    // Wait for in-flight writes: a progressing write completes, a stuck one
+    // sees #isClosing at its next retry and aborts. Bounded by the retry cap.
+    await this.#writeChain
+
     // write() resolves when the kernel accepts the bytes, not when they hit
     // the wire. Drain before closing so pending output isn't discarded.
     try { drainPort(this.#fd) } catch {}
@@ -93,12 +99,25 @@ export class SerialPort extends EventEmitter {
     this.#fd = -1
     this.#isOpen = false
     this.#isClosing = false
-    this.emit('close')
+    // A close caused by a disconnect carries the originating error, so a
+    // listener watching only 'close' can tell "device vanished" from
+    // "I called close()".
+    const cause = this.#closeCause
+    this.#closeCause = null
+    if (cause) this.emit('close', cause)
+    else this.emit('close')
   }
 
   async write(data) {
     await this.#ensureOpen()
-    return await writePort(this.#fd, data)
+    // Writes are chained so they can't interleave under backpressure, and so
+    // drain()/close() have something concrete to wait for. The abort hook
+    // lets close() interrupt a writer stuck on a full kernel buffer.
+    const job = this.#writeChain.then(() =>
+      writePort(this.#fd, data, () => this.#isClosing || !this.#isOpen)
+    )
+    this.#writeChain = job.then(() => {}, () => {})
+    return job
   }
 
   async update(options) {
@@ -128,6 +147,7 @@ export class SerialPort extends EventEmitter {
 
   async drain() {
     await this.#ensureOpen()
+    await this.#writeChain // bytes still in a JS retry loop haven't reached the kernel yet
     drainPort(this.#fd)
   }
 
@@ -173,6 +193,7 @@ export class SerialPort extends EventEmitter {
         }
       } catch (err) {
         err.disconnected = true
+        this.#closeCause = err
         this.emit('error', err)
         this.close().catch(() => {})
       }

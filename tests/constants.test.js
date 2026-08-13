@@ -1,6 +1,8 @@
 import { test, expect } from 'bun:test'
 import {
-  encodeBaudRate, dataBitsFlag,
+  encodeBaudRate, isStandardBaudRate, dataBitsFlag,
+  TERMIOS2_SIZE, TCGETS2, TCSETS2, BOTHER,
+  EAGAIN, EINTR,
   CS5, CS6, CS7, CS8,
   TERMIOS_SIZE, NCCS, TCFLAG_SIZE,
   O_RDWR, O_NOCTTY, O_NONBLOCK,
@@ -38,8 +40,26 @@ test('encodeBaudRate handles common rates', () => {
   }
 })
 
-test('encodeBaudRate rejects unsupported rates', () => {
-  expect(() => encodeBaudRate(12345)).toThrow('Unsupported baud rate')
+test('off-table rates are recognized as custom, not rejected', () => {
+  expect(isStandardBaudRate(9600)).toBe(true)
+  expect(isStandardBaudRate(250000)).toBe(false)
+  expect(isStandardBaudRate(74880)).toBe(false)
+  if (IS_LINUX) expect(encodeBaudRate(250000)).toBeUndefined()
+  else expect(encodeBaudRate(250000)).toBe(250000)
+})
+
+test('legacy rates are in the Linux table', () => {
+  if (!IS_LINUX) return
+  expect(encodeBaudRate(50)).toBe(1)
+  expect(encodeBaudRate(200)).toBe(6)
+  expect(encodeBaudRate(1800)).toBe(10)
+})
+
+test('termios2 constants match the kernel headers', () => {
+  expect(TERMIOS2_SIZE).toBe(44)
+  expect(TCGETS2).toBe(0x802c542a)
+  expect(TCSETS2).toBe(0x402c542b)
+  expect(BOTHER).toBe(0x1000)
 })
 
 test('termios struct size is correct for platform', () => {
@@ -58,6 +78,11 @@ test('open flags are nonzero', () => {
   expect(O_RDWR).toBeGreaterThan(0)
   expect(O_NOCTTY).toBeGreaterThan(0)
   expect(O_NONBLOCK).toBeGreaterThan(0)
+})
+
+test('errno constants are platform-correct', () => {
+  expect(EAGAIN).toBe(IS_LINUX ? 11 : 35)
+  expect(EINTR).toBe(4)
 })
 
 test('ioctl modem constants are defined', () => {
