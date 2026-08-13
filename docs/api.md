@@ -1,5 +1,10 @@
 # bun-serialport API
 
+TypeScript types ship with the package — no `@types/` install needed. The
+declarations are hand-authored (`src/index.d.ts`) and cover the full surface
+below, including typed event payloads. `bun run typecheck` verifies them
+against a typed consumer fixture.
+
 ## SerialPort
 
 ```js
