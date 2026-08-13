@@ -79,6 +79,10 @@ export class SerialPort extends EventEmitter {
     this.#isClosing = true
     this.#stopReading()
 
+    // write() resolves when the kernel accepts the bytes, not when they hit
+    // the wire. Drain before closing so pending output isn't discarded.
+    try { drainPort(this.#fd) } catch {}
+
     try {
       closePort(this.#fd)
     } catch (err) {

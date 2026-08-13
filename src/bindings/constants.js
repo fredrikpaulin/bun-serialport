@@ -40,6 +40,7 @@ export const CREAD = IS_LINUX ? 0x80 : 0x800
 export const PARENB = IS_LINUX ? 0x100 : 0x1000
 export const PARODD = IS_LINUX ? 0x200 : 0x2000
 export const CLOCAL = IS_LINUX ? 0x800 : 0x8000
+export const HUPCL = IS_LINUX ? 0x400 : 0x4000
 export const CRTSCTS = IS_LINUX ? 0x80000000 : 0x30000
 
 // --- Input flags (c_iflag) ---

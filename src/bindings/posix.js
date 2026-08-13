@@ -5,7 +5,7 @@ import { dlopen, FFIType, ptr, toArrayBuffer, CString } from 'bun:ffi'
 import {
   O_RDWR, O_NOCTTY, O_NONBLOCK,
   TCSADRAIN, TCSAFLUSH, TCIOFLUSH,
-  CSIZE, CREAD, CLOCAL, CSTOPB, PARENB, PARODD, CRTSCTS,
+  CSIZE, CREAD, CLOCAL, CSTOPB, PARENB, PARODD, CRTSCTS, HUPCL,
   INPCK, IXON, IXOFF,
   VMIN, VTIME, NCCS,
   TIOCMGET, TIOCMBIS, TIOCMBIC,
@@ -145,6 +145,7 @@ export function openPort(path, options = {}) {
     stopBits = 1,
     parity = 'none',
     rtscts = false,
+    hupcl = true,
     xon = false,
     xoff = false,
   } = options
@@ -190,6 +191,12 @@ export function openPort(path, options = {}) {
   // Hardware flow control
   if (rtscts) cflag |= CRTSCTS
   else cflag &= ~CRTSCTS
+
+  // Hang-up on close: drop DTR/RTS when the port closes. Devices that
+  // reset on a DTR edge (most Arduino/ESP dev boards) need hupcl: false
+  // to survive an open-write-close sequence.
+  if (hupcl) cflag |= HUPCL
+  else cflag &= ~HUPCL
 
   writeFlag(termiosView, off.c_cflag, cflag)
 
